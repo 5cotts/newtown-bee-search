@@ -57,6 +57,7 @@ import re
 import sys
 import time
 from datetime import date
+from itertools import permutations
 
 import requests
 from bs4 import BeautifulSoup
@@ -160,6 +161,24 @@ def fetch_all_hits(term: str, order: str, after: date | None, before: date | Non
         time.sleep(delay)
 
 
+def build_proximity_regex(words: list[str], window: int) -> re.Pattern:
+    """Regex requiring all `words` to appear within `window` chars of each other, any order.
+
+    A single bare --match word (e.g. "Schmidt") matches ANY person with that
+    surname -- Tucker Schmidt, Ryan Schmidt, honor-roll Schmidts, etc. -- since
+    it never checks that "Scott" is nearby. Requiring proximity of all name
+    parts instead of a single word is what actually filters for one person.
+    """
+    esc = [re.escape(w) for w in words]
+    alts = []
+    for perm in permutations(esc):
+        pat = rf'\b{perm[0]}\b'
+        for w in perm[1:]:
+            pat += rf'(?:(?!\b{perm[0]}\b).){{0,{window}}}?\b{w}\b'
+        alts.append(pat)
+    return re.compile("|".join(alts), re.I | re.S)
+
+
 def extract_matches(text: str, pattern: re.Pattern, ctx_chars: int):
     for m in pattern.finditer(text):
         s = max(0, m.start() - ctx_chars)
@@ -192,6 +211,13 @@ def main():
     ap = argparse.ArgumentParser(description="Search newtownbee.com via its own site search")
     ap.add_argument("terms", nargs="+", help="search term(s)/phrase(s)")
     ap.add_argument("--match", help="regex to filter/extract; default: OR of terms")
+    ap.add_argument("--proximity", metavar="WORD1,WORD2,...",
+                     help="require ALL comma-separated words within --window chars of "
+                          "each other, any order (e.g. --proximity Scott,Schmidt). "
+                          "Overrides --match. Use this instead of a single bare surname "
+                          "in --match, which matches ANY person with that surname.")
+    ap.add_argument("--window", type=int, default=40,
+                     help="max chars between words for --proximity (default 40)")
     ap.add_argument("--after", help="only articles on/after this date (YYYY or YYYY-MM-DD)")
     ap.add_argument("--before", help="only articles strictly before this date")
     ap.add_argument("--order", choices=["oldest", "newest"], default="oldest")
@@ -201,9 +227,13 @@ def main():
     ap.add_argument("--delay", type=float, default=1.5)
     args = ap.parse_args()
 
-    match_re = re.compile(
-        args.match if args.match else "|".join(re.escape(t) for t in args.terms), re.I
-    )
+    if args.proximity:
+        words = [w.strip() for w in args.proximity.split(",") if w.strip()]
+        match_re = build_proximity_regex(words, args.window)
+    else:
+        match_re = re.compile(
+            args.match if args.match else "|".join(re.escape(t) for t in args.terms), re.I
+        )
     after, before = parse_bound(args.after), parse_bound(args.before)
 
     # Written row-by-row as hits are confirmed, not buffered until the end: a
