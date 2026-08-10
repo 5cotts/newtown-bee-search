@@ -1,0 +1,15 @@
+[project]
+name = "newtown-bee-search"
+version = "0.1.0"
+description = "Generic Newtown Bee (newtownbee.com) article search via its WordPress REST API. See AGENTS.md."
+readme = "AGENTS.md"
+authors = [
+    { name = "Scott Schmidt", email = "s@scottschmidt.io" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.34.2",
+]
+
+[tool.uv]
+package = false
