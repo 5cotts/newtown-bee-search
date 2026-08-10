@@ -53,6 +53,7 @@ Options:
 import argparse
 import csv
 import html
+import json
 import re
 import sys
 import time
@@ -223,9 +224,12 @@ def main():
     ap.add_argument("--order", choices=["oldest", "newest"], default="oldest")
     ap.add_argument("--context", type=int, default=160,
                      help="chars of context around the first match, for the CSV preview column")
-    ap.add_argument("--out", default="bee_search_results.csv")
+    ap.add_argument("--format", choices=["csv", "jsonl"], default="csv",
+                     help="output format (default: csv). jsonl writes one JSON object per line.")
+    ap.add_argument("--out", help="output file (default: bee_search_results.<format>)")
     ap.add_argument("--delay", type=float, default=1.5)
     args = ap.parse_args()
+    out_path = args.out or f"bee_search_results.{args.format}"
 
     if args.proximity:
         words = [w.strip() for w in args.proximity.split(",") if w.strip()]
@@ -242,11 +246,21 @@ def main():
     # progress signal alongside the console logging. Rows land in per-term
     # chronological order (matching --order) but are NOT globally sorted
     # across terms -- sort the CSV afterward if you need one merged timeline.
+    FIELDS = ["article_date", "article_title", "article_url", "search_term",
+              "match_count", "context", "full_text"]
+
     seen_urls, written = set(), 0
-    with open(args.out, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["article_date", "article_title", "article_url", "search_term",
-                    "match_count", "context", "full_text"])
+    with open(out_path, "w", newline="" if args.format == "csv" else None, encoding="utf-8") as f:
+        if args.format == "csv":
+            w = csv.writer(f)
+            w.writerow(FIELDS)
+
+            def write_row(values):
+                w.writerow(values)
+        else:
+            def write_row(values):
+                f.write(json.dumps(dict(zip(FIELDS, values)), ensure_ascii=False) + "\n")
+
         f.flush()
 
         for term in args.terms:
@@ -268,7 +282,7 @@ def main():
                     if not found:
                         continue
                     _, first_context = found[0]
-                    w.writerow([iso, title, url, term, len(found), first_context, text])
+                    write_row([iso, title, url, term, len(found), first_context, text])
                     f.flush()
                     written += 1
                     print(f"  MATCH ({len(found)}x): {iso}  {title}  [{written} written so far]")
@@ -276,7 +290,7 @@ def main():
                 print(f"  search error for {term!r}: {e}", file=sys.stderr)
             time.sleep(args.delay)
 
-    print(f"\nWrote {written} rows -> {args.out}")
+    print(f"\nWrote {written} rows -> {out_path}")
 
 
 if __name__ == "__main__":
