@@ -12,8 +12,10 @@ help:
 	@echo "                MATCH=Schmidt AFTER=2004 BEFORE=2015 OUT=schmidt_hits.csv"
 
 search:
-	@test -n "$(TERMS)" || { echo "usage: make search TERMS='term1 term2 ...' [MATCH=regex] [AFTER=...] [BEFORE=...] [CONTEXT=N] [OUT=file.csv] [DELAY=N]"; exit 2; }
-	uv run python bee_search.py $(TERMS) \
+ifeq ($(strip $(TERMS)),)
+	$(error usage: make search TERMS='term1 term2 ...' [MATCH=regex] [AFTER=...] [BEFORE=...] [CONTEXT=N] [OUT=file.csv] [DELAY=N])
+endif
+	uv run python -u bee_search.py $(TERMS) \
 		$(if $(MATCH),--match "$(MATCH)") \
 		$(if $(AFTER),--after "$(AFTER)") \
 		$(if $(BEFORE),--before "$(BEFORE)") \

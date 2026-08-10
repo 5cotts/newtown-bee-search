@@ -117,7 +117,8 @@ def fetch_all_hits(term: str, order: str, after: date | None, before: date | Non
         if total is None:
             m = TOTAL_PATTERN.search(body)
             total = int(m.group(1)) if m else 0
-            print(f"  [{term}] {total} results returned by the site search")
+            total_pages = -(-total // PER_PAGE)  # ceil
+            print(f"  [{term}] {total} results returned by the site search ({total_pages} pages)")
             if total == 0:
                 return
 
@@ -148,7 +149,8 @@ def fetch_all_hits(term: str, order: str, after: date | None, before: date | Non
                     continue
             yield iso, title, url
 
-        print(f"  [{term}] start={start}: {len(hits)} hits ({hits[0][0]} .. {hits[-1][0]})")
+        page = start // PER_PAGE + 1
+        print(f"  [{term}] page {page}/{total_pages}: {len(hits)} hits ({hits[0][0]} .. {hits[-1][0]})")
 
         if stop:
             return
@@ -204,40 +206,47 @@ def main():
     )
     after, before = parse_bound(args.after), parse_bound(args.before)
 
-    seen_urls, rows = set(), []
-    for term in args.terms:
-        print(f"Searching site search for: {term!r}")
-        try:
-            for iso, title, url in fetch_all_hits(term, args.order, after, before, args.delay):
-                if url in seen_urls:
-                    continue
-                seen_urls.add(url)
-
-                time.sleep(args.delay)
-                try:
-                    text = fetch_article_text(url)
-                except requests.HTTPError as e:
-                    print(f"  article fetch error for {url}: {e}", file=sys.stderr)
-                    continue
-
-                found = list(extract_matches(text, match_re, args.context))
-                if not found:
-                    continue
-                _, first_context = found[0]
-                rows.append([iso, title, url, term, len(found), first_context, text])
-                print(f"  MATCH ({len(found)}x): {iso}  {title}")
-        except requests.HTTPError as e:
-            print(f"  search error for {term!r}: {e}", file=sys.stderr)
-        time.sleep(args.delay)
-
-    rows.sort(key=lambda r: r[0])
-    header = ["article_date", "article_title", "article_url", "search_term",
-              "match_count", "context", "full_text"]
+    # Written row-by-row as hits are confirmed, not buffered until the end: a
+    # long multi-term run survives an interrupt/crash with whatever it found
+    # so far already on disk, and `wc -l`/`tail -f` on --out is a second live
+    # progress signal alongside the console logging. Rows land in per-term
+    # chronological order (matching --order) but are NOT globally sorted
+    # across terms -- sort the CSV afterward if you need one merged timeline.
+    seen_urls, written = set(), 0
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(header)
-        w.writerows(rows)
-    print(f"\nWrote {len(rows)} rows across {len({r[2] for r in rows})} articles -> {args.out}")
+        w.writerow(["article_date", "article_title", "article_url", "search_term",
+                    "match_count", "context", "full_text"])
+        f.flush()
+
+        for term in args.terms:
+            print(f"Searching site search for: {term!r}")
+            try:
+                for iso, title, url in fetch_all_hits(term, args.order, after, before, args.delay):
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+
+                    time.sleep(args.delay)
+                    try:
+                        text = fetch_article_text(url)
+                    except requests.HTTPError as e:
+                        print(f"  article fetch error for {url}: {e}", file=sys.stderr)
+                        continue
+
+                    found = list(extract_matches(text, match_re, args.context))
+                    if not found:
+                        continue
+                    _, first_context = found[0]
+                    w.writerow([iso, title, url, term, len(found), first_context, text])
+                    f.flush()
+                    written += 1
+                    print(f"  MATCH ({len(found)}x): {iso}  {title}  [{written} written so far]")
+            except requests.HTTPError as e:
+                print(f"  search error for {term!r}: {e}", file=sys.stderr)
+            time.sleep(args.delay)
+
+    print(f"\nWrote {written} rows -> {args.out}")
 
 
 if __name__ == "__main__":
