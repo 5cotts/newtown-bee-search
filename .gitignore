@@ -11,5 +11,8 @@ wheels/
 
 # Search output / secrets
 *.csv
+*.jsonl
+*.png
+*.log
 *.db
 *.token
